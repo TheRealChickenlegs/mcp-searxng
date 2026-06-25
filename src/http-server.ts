@@ -124,8 +124,9 @@ export async function createHttpServer(
       transport = session.transport;
       mcpServer = session.mcpServer;
       logMessage(mcpServer, "debug", `Reusing session: ${sessionId}`);
-    } else if (!sessionId && isInitializeRequest(req.body)) {
+    } else if (isInitializeRequest(req.body)) {
       // New initialization request — create fresh McpServer and transport
+      // Allow even when a stale sessionId is present (e.g. after server restart)
       mcpServer = createMcpServer();
 
       transport = new StreamableHTTPServerTransport({
@@ -139,30 +140,36 @@ export async function createHttpServer(
         allowedOrigins: security.allowedOrigins,
       });
 
-      // Clean up session when transport closes
+      // Connect this session's McpServer to its transport
+      // Note: connect() assigns its own onclose handler internally, so we
+      // wrap it AFTER to also clean up our session tracking
+      await mcpServer.connect(transport);
+
+      const originalOnclose = transport.onclose;
       transport.onclose = () => {
         if (transport.sessionId) {
           sessions.delete(transport.sessionId);
         }
+        originalOnclose?.();
       };
-
-      // Connect this session's McpServer to its transport
-      await mcpServer.connect(transport);
     } else {
-      // Invalid request
+      // Invalid request — no session ID and not an initialize request
       console.warn(`⚠️  POST request rejected - invalid request:`, {
         clientIP: req.ip || req.socket.remoteAddress,
         sessionId: sessionId || 'undefined',
-        hasInitializeRequest: isInitializeRequest(req.body),
+        hasInitializeRequest: false,
         userAgent: req.headers['user-agent'],
         contentType: req.headers['content-type'],
         accept: req.headers['accept']
       });
-      res.status(400).json({
+      const isUnknownSession = !!sessionId;
+      res.status(isUnknownSession ? 404 : 400).json({
         jsonrpc: '2.0',
         error: {
-          code: -32000,
-          message: 'Bad Request: No valid session ID provided',
+          code: isUnknownSession ? -32001 : -32000,
+          message: isUnknownSession
+            ? 'Session not found'
+            : 'Bad Request: No valid session ID provided',
         },
         id: null,
       });

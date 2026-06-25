@@ -81,7 +81,7 @@ async function runTests() {
     assert.equal(res.body.error.code, -32000);
   }, results);
 
-  await testFunction('POST /mcp with unknown sessionId and non-initialize body returns 400', async () => {
+  await testFunction('POST /mcp with unknown sessionId and non-initialize body returns 404', async () => {
     const app = await createHttpServer(() => createTestMcpServer());
 
     const res = await request(app)
@@ -90,8 +90,9 @@ async function runTests() {
       .set('mcp-session-id', 'unknown-session-abc')
       .send({ jsonrpc: '2.0', method: 'tools/list', id: 1 });
 
-    // mcp-session-id is set but transport not found — falls through to invalid request
-    assert.equal(res.status, 400);
+    // mcp-session-id is set but transport not found — returns session-not-found
+    assert.equal(res.status, 404);
+    assert.equal(res.body.error.code, -32001);
   }, results);
 
   await testFunction('GET /mcp without sessionId returns 400', async () => {
